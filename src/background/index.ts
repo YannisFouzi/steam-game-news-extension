@@ -132,6 +132,26 @@ async function setFollow(msg: {
   }
 }
 
+// Writes prove identity with the OpenID Bearer session (the backend rejects a
+// bare SteamID on writes — see requireWebAuth). The bell REUSES the session
+// already established when the user opened the NEWS feed; it NEVER triggers a
+// login itself (cachedToken, not obtainToken). If there's no cached session yet
+// (the feed was never opened), the write simply no-ops — no popup. The only
+// login in the extension stays the one-time one on opening the feed.
+async function authedWebFetch(
+  steamId: string,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response | null> {
+  const token = await cachedToken(steamId);
+  if (!token) {
+    return null;
+  }
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
+}
+
 async function requestFollow(
   msg: {
     steamId: string;
@@ -152,25 +172,26 @@ async function requestFollow(
     url.searchParams.set('logoUrl', msg.logoUrl);
   }
 
-  let res = await fetch(url.toString());
+  let res = await authedWebFetch(msg.steamId, url.toString());
   // Brand-new install whose account isn't provisioned yet → provision and retry.
-  if (res.status === 404) {
+  // register is public/idempotent (no auth), so a plain fetch is fine here.
+  if (res && res.status === 404) {
     try {
       await fetch(`${API_WEB}/register/${msg.steamId}`);
     } catch {
       /* ignore — the retry below surfaces a real failure */
     }
     await sleep(1500);
-    res = await fetch(url.toString());
+    res = await authedWebFetch(msg.steamId, url.toString());
   }
-  return res.ok;
+  return Boolean(res && res.ok);
 }
 
 async function requestUnfollow(steamId: string, appId: string): Promise<boolean> {
-  const res = await fetch(`${API_WEB}/follow/${steamId}/${appId}`, {
+  const res = await authedWebFetch(steamId, `${API_WEB}/follow/${steamId}/${appId}`, {
     method: 'DELETE',
   });
-  return res.ok;
+  return Boolean(res && res.ok);
 }
 
 // Toggle notifications without unfollowing (the bell on an already-followed
@@ -181,12 +202,16 @@ async function setNotifications(
   enabled: boolean,
 ): Promise<MessageResponse> {
   try {
-    const res = await fetch(
+    const res = await authedWebFetch(
+      steamId,
       `${API_WEB}/follow-notifications/${steamId}/${appId}?enabled=${
         enabled ? 'true' : 'false'
       }`,
       { method: 'POST' },
     );
+    if (!res) {
+      return { ok: false, error: 'session indisponible' };
+    }
     return res.ok
       ? { ok: true, followed: true, notified: enabled }
       : { ok: false, error: `notifications HTTP ${res.status}` };
@@ -231,46 +256,57 @@ async function cachedToken(steamId: string): Promise<string | null> {
   return null;
 }
 
-async function ensureSession(steamId: string): Promise<MessageResponse> {
+// Returns a usable session token for the SteamID: the cached one if still valid,
+// otherwise it runs the one-time Steam OpenID popup and caches the result.
+// Returns null if login fails/cancels. Shared by the feed (ENSURE_SESSION) and
+// the store-bell writes (authedWebFetch).
+async function obtainToken(steamId: string): Promise<string | null> {
+  const cached = await cachedToken(steamId);
+  if (cached) {
+    return cached;
+  }
+
+  const startRes = await fetch(`${API_BASE}/auth/steam/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform: 'extension' }),
+  });
+  if (!startRes.ok) {
+    return null;
+  }
+  const { authToken, authUrl } = (await startRes.json()) as {
+    authToken: string;
+    authUrl: string;
+  };
+
+  const popup = await chrome.windows.create({
+    url: authUrl,
+    type: 'popup',
+    width: 520,
+    height: 720,
+  });
   try {
-    const cached = await cachedToken(steamId);
-    if (cached) {
-      return { ok: true, token: cached };
-    }
-
-    const startRes = await fetch(`${API_BASE}/auth/steam/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: 'extension' }),
-    });
-    if (!startRes.ok) {
-      return { ok: false, error: `auth start HTTP ${startRes.status}` };
-    }
-    const { authToken, authUrl } = (await startRes.json()) as {
-      authToken: string;
-      authUrl: string;
-    };
-
-    const popup = await chrome.windows.create({
-      url: authUrl,
-      type: 'popup',
-      width: 520,
-      height: 720,
-    });
-    try {
-      const token = await pollForSession(authToken);
-      const session: CachedSession = { token, steamId };
-      await chrome.storage.local.set({ [STORAGE_KEYS.SESSION]: session });
-      return { ok: true, token };
-    } finally {
-      if (popup?.id != null) {
-        try {
-          await chrome.windows.remove(popup.id);
-        } catch {
-          /* already closed by the user */
-        }
+    const token = await pollForSession(authToken);
+    const session: CachedSession = { token, steamId };
+    await chrome.storage.local.set({ [STORAGE_KEYS.SESSION]: session });
+    return token;
+  } finally {
+    if (popup?.id != null) {
+      try {
+        await chrome.windows.remove(popup.id);
+      } catch {
+        /* already closed by the user */
       }
     }
+  }
+}
+
+async function ensureSession(steamId: string): Promise<MessageResponse> {
+  try {
+    const token = await obtainToken(steamId);
+    return token
+      ? { ok: true, token }
+      : { ok: false, error: 'session indisponible' };
   } catch (error) {
     return {
       ok: false,

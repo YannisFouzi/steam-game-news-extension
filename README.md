@@ -23,9 +23,14 @@ power the mobile app, the Millennium plugin and this extension.
   to get a feed session, provisions the account (idempotent `/register`), and
   serves the bell's follow-state / follow / unfollow requests.
 - **Follow bell**: state read on mount via `GET /api/web/follow-state/:id/:appId`
-  (public, single boolean); toggle via `GET /api/web/follow` and
-  `DELETE /api/web/follow/:id/:appId`. SteamID comes from the page, appId from
-  the `/app/<id>/` URL — no Steam API dependency.
+  (public, single boolean); toggle via `GET /api/web/follow` /
+  `DELETE /api/web/follow/:id/:appId`, which now require a Steam session (the
+  backend rejects a bare SteamID on writes — IDOR fix). The worker attaches the
+  OpenID Bearer by **reusing the session already cached when the user opened the
+  NEWS feed** (`cachedToken`); the bell NEVER triggers its own login — if no
+  session exists yet, the toggle simply no-ops. The only login in the extension
+  stays the one-time popup on opening the feed. SteamID comes from the page, appId
+  from the `/app/<id>/` URL — no Steam API dependency.
 
 ## Build
 

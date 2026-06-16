@@ -23,6 +23,27 @@ const STEAM_ID_FROM_PROFILE_URL = /\/profiles\/(\d{17})/;
 const APP_ID_FROM_PATH = /\/app\/(\d+)/;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+// Relaie les erreurs de ce content script au service worker (qui a Sentry). Ce
+// fichier ne peut PAS importer Sentry (cf. note en tête : aucun import/export),
+// donc on remonte via un message. Fire-and-forget.
+function reportError(message: string, stack?: string): void {
+  try {
+    chrome.runtime.sendMessage({ type: 'REPORT_ERROR', message, stack });
+  } catch {
+    /* worker indisponible (rechargement de l'extension) — on n'insiste pas */
+  }
+}
+window.addEventListener('error', (event) => {
+  reportError(event.message, event.error?.stack);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  reportError(
+    reason instanceof Error ? reason.message : String(reason),
+    reason instanceof Error ? reason.stack : undefined,
+  );
+});
+
 // Local mirror of MessageResponse (this file stays import/export-free — see note
 // above — so the worker's response type is inlined here).
 type FollowResponse =

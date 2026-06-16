@@ -38,5 +38,8 @@ export default defineManifest({
     'https://gamenews.up.railway.app/*',
     'https://store.steampowered.com/*',
     'https://steamcommunity.com/*',
+    // Ingest Sentry (gamenotif-extension, région EU) — le service worker y poste
+    // les erreurs sans contrainte CORS. Voir SENTRY_SETUP.md §6.
+    'https://o4511158959931392.ingest.de.sentry.io/*',
   ],
 });

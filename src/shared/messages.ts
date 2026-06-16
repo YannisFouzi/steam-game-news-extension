@@ -20,7 +20,10 @@ export type ExtensionMessage =
     }
   // Toggles notifications WITHOUT unfollowing (the bell on an already-followed
   // game).
-  | { type: 'SET_NOTIFICATIONS'; steamId: string; appId: string; enabled: boolean };
+  | { type: 'SET_NOTIFICATIONS'; steamId: string; appId: string; enabled: boolean }
+  // Erreur capturée par le content script (qui ne peut PAS importer Sentry — il
+  // doit rester sans import/export) → relayée au worker, qui la remonte à Sentry.
+  | { type: 'REPORT_ERROR'; message: string; stack?: string };
 
 export type MessageResponse =
   | { ok: true }

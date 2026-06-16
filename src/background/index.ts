@@ -11,8 +11,22 @@
 //   - the session is cached here and reused until expiry, so the popup only
 //     appears the first time.
 
+import * as Sentry from '@sentry/browser';
 import { API_BASE, STORAGE_KEYS } from '@/shared/config';
 import type { ExtensionMessage, MessageResponse } from '@/shared/messages';
+
+// Monitoring d'erreurs de l'extension. Le service worker initialise Sentry ; le
+// content script (qui ne peut pas importer Sentry, cf. content/index.ts) lui
+// relaie ses erreurs via REPORT_ERROR. Le feed (iframe) est déjà couvert par le
+// Sentry du SPA web (tag extension-iframe). DSN = clé PUBLIQUE. Voir
+// SENTRY_SETUP.md §6.
+Sentry.init({
+  dsn: 'https://51608ad2484eb9e7753b51d500297114@o4511158959931392.ingest.de.sentry.io/4511575879581776',
+  release: `extension@${chrome.runtime.getManifest().version}`,
+  tracesSampleRate: 0,
+  sendDefaultPii: false,
+});
+Sentry.setTag('surface', 'extension-sw');
 
 // Public-by-SteamID surface (same one the Millennium plugin uses). The worker —
 // not the content script — calls it: it has host_permissions, so these are
@@ -52,6 +66,16 @@ async function handleMessage(
     }
     case 'SET_NOTIFICATIONS': {
       return setNotifications(message.steamId, message.appId, message.enabled);
+    }
+    case 'REPORT_ERROR': {
+      // Erreur relayée par le content script → on la remonte à Sentry depuis le
+      // worker (qui a les host_permissions pour joindre l'ingest).
+      const err = new Error(message.message);
+      if (message.stack) {
+        err.stack = message.stack;
+      }
+      Sentry.captureException(err, { tags: { surface: 'extension-content' } });
+      return { ok: true };
     }
   }
 }

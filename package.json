@@ -13,14 +13,14 @@
   },
   "dependencies": {
     "@sentry/browser": "^10.58.0",
-    "react": "^18.3.1",
+    "react": "^19.2.7",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "2.0.0-beta.25",
     "@types/chrome": "^0.0.270",
     "@types/node": "^20.19.41",
-    "@types/react": "^18.3.3",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
